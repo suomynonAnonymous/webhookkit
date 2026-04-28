@@ -1,5 +1,7 @@
 """Webhook exception classes."""
 
+from __future__ import annotations
+
 
 class WebhookError(Exception):
     """Base exception for all webhook errors."""
