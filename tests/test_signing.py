@@ -4,6 +4,8 @@ import base64
 import hashlib
 import hmac
 
+import pytest
+
 from webhookkit.signing import generate_signature_header, sign_payload
 
 
@@ -28,6 +30,14 @@ class TestSignPayload:
         sig = sign_payload(payload, secret)
         expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
         assert sig == expected
+
+    def test_disallowed_algorithm_raises(self):
+        with pytest.raises(ValueError, match="Unsupported algorithm"):
+            sign_payload(b"test", "secret", algorithm="md5")
+
+    def test_sha1_disallowed(self):
+        with pytest.raises(ValueError, match="Unsupported algorithm"):
+            sign_payload(b"test", "secret", algorithm="sha1")
 
 
 class TestGenerateSignatureHeader:

@@ -36,3 +36,4 @@ Thumbs.db
 
 # Credentials (never commit these)
 .pypirc
+coverage.json

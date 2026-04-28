@@ -8,6 +8,7 @@ import hmac
 import time
 
 from .exceptions import SignatureVerificationError, TimestampVerificationError
+from .signing import _get_hash_func
 
 
 class BaseVerifier:
@@ -158,6 +159,7 @@ class HMACVerifier(BaseVerifier):
         algorithm: str = "sha256",
         encoding: str = "hex",
     ):
+        _get_hash_func(algorithm)  # validate algorithm at init time
         self.secret = secret
         self.header = header
         self.algorithm = algorithm
@@ -168,7 +170,7 @@ class HMACVerifier(BaseVerifier):
         if not sig_header:
             return False
 
-        hash_func = getattr(hashlib, self.algorithm)
+        hash_func = _get_hash_func(self.algorithm)
         mac = hmac.new(self.secret.encode(), payload, hash_func)
 
         if self.encoding == "base64":

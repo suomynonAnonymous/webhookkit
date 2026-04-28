@@ -7,13 +7,22 @@ import hashlib
 import hmac
 import time
 
+ALLOWED_ALGORITHMS = frozenset({"sha256", "sha384", "sha512"})
+
+
+def _get_hash_func(algorithm: str):
+    """Return a hashlib constructor for the given algorithm, or raise ValueError."""
+    if algorithm not in ALLOWED_ALGORITHMS:
+        raise ValueError(f"Unsupported algorithm '{algorithm}'. Allowed: {', '.join(sorted(ALLOWED_ALGORITHMS))}")
+    return getattr(hashlib, algorithm)
+
 
 def sign_payload(payload: bytes, secret: str, algorithm: str = "sha256") -> str:
     """Create an HMAC signature for a payload.
 
     Returns the hex-encoded HMAC digest.
     """
-    hash_func = getattr(hashlib, algorithm)
+    hash_func = _get_hash_func(algorithm)
     return hmac.new(secret.encode(), payload, hash_func).hexdigest()
 
 

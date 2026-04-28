@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from typing import Any
@@ -35,6 +36,19 @@ class WebhookSender:
         self.retry_policy = retry_policy or RetryPolicy()
         self.timeout = timeout
         self.default_headers = headers or {}
+
+    @staticmethod
+    def _validate_url(url: str) -> None:
+        """Reject non-HTTP(S) URL schemes to prevent SSRF."""
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"Only http and https URLs are allowed, got: {parsed.scheme!r}")
+
+    @staticmethod
+    def _sanitize_url(url: str) -> str:
+        """Strip query parameters from URL for safe use in error messages."""
+        parsed = urllib.parse.urlparse(url)
+        return urllib.parse.urlunparse(parsed._replace(query="", fragment=""))
 
     def _build_request_headers(
         self, payload_bytes: bytes, event_type: str, idempotency_key: str | None = None
@@ -72,6 +86,7 @@ class WebhookSender:
         Retries on 5xx/timeout according to the retry policy.
         Raises DeliveryError if all attempts fail.
         """
+        self._validate_url(url)
         event = WebhookEvent(type=event_type, payload=payload)
         payload_bytes = json.dumps(event.to_dict()).encode()
         headers = self._build_request_headers(payload_bytes, event_type, idempotency_key)
@@ -109,7 +124,7 @@ class WebhookSender:
             attempt += 1
 
         raise DeliveryError(
-            f"Webhook delivery to {url} failed after {result.total_attempts} attempt(s)",
+            f"Webhook delivery to {self._sanitize_url(url)} failed after {result.total_attempts} attempt(s)",
             status_code=result.deliveries[-1].status_code,
             attempts=result.total_attempts,
         )
@@ -125,6 +140,7 @@ class WebhookSender:
 
         Requires httpx to be installed: pip install webhookkit[async]
         """
+        self._validate_url(url)
         try:
             import httpx
         except ImportError:
@@ -168,7 +184,7 @@ class WebhookSender:
                 attempt += 1
 
         raise DeliveryError(
-            f"Webhook delivery to {url} failed after {result.total_attempts} attempt(s)",
+            f"Webhook delivery to {self._sanitize_url(url)} failed after {result.total_attempts} attempt(s)",
             status_code=result.deliveries[-1].status_code,
             attempts=result.total_attempts,
         )

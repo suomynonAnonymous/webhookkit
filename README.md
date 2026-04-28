@@ -155,7 +155,7 @@ verifier = HMACVerifier("your_secret")
 verifier = HMACVerifier(
     secret="your_secret",
     header="X-My-Signature",    # which header to read
-    algorithm="sha512",          # sha256, sha512, sha1, etc.
+    algorithm="sha512",          # sha256, sha384, sha512
     encoding="base64",           # "hex" or "base64"
 )
 ```
@@ -195,6 +195,8 @@ try:
 except DeliveryError as e:
     print(f"Failed after {e.attempts} attempts, last status: {e.status_code}")
 ```
+
+**Security:** Only `http://` and `https://` URLs are allowed. Other schemes (e.g., `file://`, `ftp://`) are rejected to prevent SSRF. If you accept webhook URLs from users, you should additionally validate that they don't point to internal/private IP ranges.
 
 **Headers sent automatically:**
 - `Content-Type: application/json`

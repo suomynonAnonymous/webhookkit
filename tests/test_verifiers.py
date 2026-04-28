@@ -179,3 +179,11 @@ class TestHMACVerifier:
         sig = hmac.new(self.secret.encode(), self.payload, hashlib.sha512).hexdigest()
         headers = {"X-Webhook-Signature": sig}
         assert verifier.verify(self.payload, headers) is True
+
+    def test_rejects_md5_algorithm(self):
+        with pytest.raises(ValueError, match="Unsupported algorithm"):
+            HMACVerifier(self.secret, algorithm="md5")
+
+    def test_rejects_sha1_algorithm(self):
+        with pytest.raises(ValueError, match="Unsupported algorithm"):
+            HMACVerifier(self.secret, algorithm="sha1")

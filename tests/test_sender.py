@@ -137,6 +137,23 @@ class TestWebhookSender:
         with pytest.raises(DeliveryError):
             sender.send("http://127.0.0.1:1/nonexistent", "test", {})
 
+    def test_rejects_non_http_url(self):
+        sender = WebhookSender()
+        with pytest.raises(ValueError, match="Only http and https"):
+            sender.send("file:///etc/passwd", "test", {})
+
+    def test_rejects_ftp_url(self):
+        sender = WebhookSender()
+        with pytest.raises(ValueError, match="Only http and https"):
+            sender.send("ftp://example.com/data", "test", {})
+
+    def test_error_message_strips_query_params(self, webhook_server):
+        sender = WebhookSender(retry_policy=RetryPolicy(max_retries=0))
+        with pytest.raises(DeliveryError) as exc_info:
+            sender.send("http://127.0.0.1:1/hook?api_key=SECRET", "test", {})
+        assert "SECRET" not in str(exc_info.value)
+        assert "api_key" not in str(exc_info.value)
+
     def test_stripe_signing_scheme(self, webhook_server):
         server, url = webhook_server
         _WebhookHandler.responses = [(200, b"OK")]
