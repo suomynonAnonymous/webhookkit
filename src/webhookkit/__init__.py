@@ -12,7 +12,7 @@ from .receiver import WebhookReceiver
 from .sender import WebhookSender
 from .verifiers import BaseVerifier, GitHubVerifier, HMACVerifier, ShopifyVerifier, SlackVerifier, StripeVerifier
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "BaseVerifier",
