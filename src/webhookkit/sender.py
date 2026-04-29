@@ -12,7 +12,7 @@ from typing import Any
 
 from .exceptions import DeliveryError
 from .models import DeliveryResult, RetryPolicy, WebhookDelivery, WebhookEvent
-from .retry import calculate_delay, should_retry
+from .retry import calculate_delay, parse_retry_after, should_retry
 from .signing import generate_signature_header
 
 
@@ -94,14 +94,16 @@ class WebhookSender:
         self._validate_url(url)
         event = WebhookEvent(type=event_type, payload=payload)
         payload_bytes = json.dumps(event.to_dict()).encode()
-        headers = self._build_request_headers(payload_bytes, event_type, idempotency_key)
 
         result = DeliveryResult()
         attempt = 0
 
         while True:
+            # Build fresh headers each attempt (new UUID, timestamp, signature)
+            headers = self._build_request_headers(payload_bytes, event_type, idempotency_key)
             delivery = WebhookDelivery(event=event, url=url, attempt=attempt + 1)
             start = time.monotonic()
+            retry_after_value = None
 
             try:
                 req = urllib.request.Request(url, data=payload_bytes, headers=headers, method="POST")
@@ -112,6 +114,7 @@ class WebhookSender:
             except urllib.error.HTTPError as e:
                 delivery.status_code = e.code
                 delivery.response_body = e.read().decode(errors="replace")
+                retry_after_value = parse_retry_after(e.headers.get("Retry-After"))
             except (urllib.error.URLError, TimeoutError, OSError):
                 delivery.status_code = None
 
@@ -124,7 +127,7 @@ class WebhookSender:
             if not should_retry(delivery.status_code, attempt, self.retry_policy):
                 break
 
-            delay = calculate_delay(attempt, self.retry_policy)
+            delay = calculate_delay(attempt, self.retry_policy, retry_after=retry_after_value)
             time.sleep(delay)
             attempt += 1
 
@@ -155,21 +158,25 @@ class WebhookSender:
 
         event = WebhookEvent(type=event_type, payload=payload)
         payload_bytes = json.dumps(event.to_dict()).encode()
-        headers = self._build_request_headers(payload_bytes, event_type, idempotency_key)
 
         result = DeliveryResult()
         attempt = 0
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             while True:
+                # Build fresh headers each attempt (new UUID, timestamp, signature)
+                headers = self._build_request_headers(payload_bytes, event_type, idempotency_key)
                 delivery = WebhookDelivery(event=event, url=url, attempt=attempt + 1)
                 start = time.monotonic()
+                retry_after_value = None
 
                 try:
                     resp = await client.post(url, content=payload_bytes, headers=headers)
                     delivery.status_code = resp.status_code
                     delivery.response_body = resp.text
                     delivery.success = 200 <= resp.status_code < 300
+                    if not delivery.success:
+                        retry_after_value = parse_retry_after(resp.headers.get("Retry-After"))
                 except httpx.TimeoutException:
                     delivery.status_code = None
                 except httpx.HTTPError:
@@ -184,7 +191,7 @@ class WebhookSender:
                 if not should_retry(delivery.status_code, attempt, self.retry_policy):
                     break
 
-                delay = calculate_delay(attempt, self.retry_policy)
+                delay = calculate_delay(attempt, self.retry_policy, retry_after=retry_after_value)
                 await asyncio.sleep(delay)
                 attempt += 1
 

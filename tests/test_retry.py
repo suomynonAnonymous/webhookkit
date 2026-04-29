@@ -1,7 +1,7 @@
 """Tests for retry logic."""
 
 from webhookkit.models import RetryPolicy
-from webhookkit.retry import RETRYABLE_STATUS_CODES, calculate_delay, should_retry
+from webhookkit.retry import RETRYABLE_STATUS_CODES, calculate_delay, parse_retry_after, should_retry
 
 
 class TestCalculateDelay:
@@ -32,6 +32,61 @@ class TestCalculateDelay:
         policy = RetryPolicy(initial_delay=1.0, jitter=True)
         delays = {calculate_delay(2, policy) for _ in range(50)}
         assert len(delays) > 1  # jitter should produce varied values
+
+    def test_calculate_delay_with_retry_after(self):
+        """retry_after should override the calculated backoff."""
+        policy = RetryPolicy(initial_delay=1.0, jitter=False)
+        # retry_after = 10 should be used instead of exponential backoff
+        assert calculate_delay(0, policy, retry_after=10.0) == 10.0
+
+    def test_retry_after_capped_at_max_delay(self):
+        """retry_after should still be capped at max_delay."""
+        policy = RetryPolicy(initial_delay=1.0, max_delay=5.0, jitter=False)
+        assert calculate_delay(0, policy, retry_after=100.0) == 5.0
+
+    def test_retry_after_zero_uses_backoff(self):
+        """retry_after=0 should fall through to normal backoff."""
+        policy = RetryPolicy(initial_delay=1.0, jitter=False)
+        assert calculate_delay(0, policy, retry_after=0) == 1.0
+
+    def test_retry_after_negative_uses_backoff(self):
+        """Negative retry_after should fall through to normal backoff."""
+        policy = RetryPolicy(initial_delay=1.0, jitter=False)
+        assert calculate_delay(0, policy, retry_after=-5.0) == 1.0
+
+    def test_retry_after_none_uses_backoff(self):
+        """None retry_after should use normal backoff."""
+        policy = RetryPolicy(initial_delay=1.0, jitter=False)
+        assert calculate_delay(0, policy, retry_after=None) == 1.0
+
+
+class TestParseRetryAfter:
+    def test_integer_seconds(self):
+        assert parse_retry_after("120") == 120.0
+
+    def test_float_seconds(self):
+        assert parse_retry_after("1.5") == 1.5
+
+    def test_none_value(self):
+        assert parse_retry_after(None) is None
+
+    def test_empty_string(self):
+        assert parse_retry_after("") is None
+
+    def test_invalid_string(self):
+        assert parse_retry_after("not-a-number-or-date") is None
+
+    def test_http_date_format(self):
+        """HTTP-date should be parsed (result depends on current time)."""
+        import email.utils
+        import time
+
+        # Create a date 60 seconds in the future
+        future = time.time() + 60
+        date_str = email.utils.formatdate(future, usegmt=True)
+        result = parse_retry_after(date_str)
+        assert result is not None
+        assert 50 <= result <= 70  # roughly 60 seconds
 
 
 class TestShouldRetry:

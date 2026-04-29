@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0 (2026-04-29)
+
+### Added
+- **Handler error isolation** — if a handler raises during `dispatch()`, remaining handlers still execute
+- `on_error` callback parameter on `WebhookReceiver.__init__()` for custom error handling
+- `off(event_type, handler=None)` method to unregister handlers
+- Decorator-based handler registration: `@receiver.on("event")`
+- `dispatch_async()` and `process_async()` for async handler support (mixed sync/async)
+- `parse_retry_after()` — parse `Retry-After` header (integer seconds and HTTP-date)
+- `retry_after` parameter on `calculate_delay()` — respects server-specified delays
+- Retry-After header extraction in both sync and async sender retry loops
+- Fresh timestamps and UUIDs on each retry attempt (no more stale signatures)
+
 ## 0.1.2 (2026-04-28)
 
 ### Security

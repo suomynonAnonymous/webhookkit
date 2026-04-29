@@ -14,23 +14,36 @@ from webhookkit.sender import WebhookSender
 class _WebhookHandler(BaseHTTPRequestHandler):
     """Simple HTTP handler for testing webhook delivery."""
 
-    responses = []  # list of (status_code, body) tuples — pops from front
+    responses = []  # list of (status_code, body, extra_headers) tuples — pops from front
 
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length)
         # Store request data for assertions
-        self.server.last_request = {
+        if not hasattr(self.server, "all_requests"):
+            self.server.all_requests = []
+        request_data = {
             "headers": dict(self.headers),
             "body": body,
             "path": self.path,
         }
+        self.server.last_request = request_data
+        self.server.all_requests.append(request_data)
+
         if self.responses:
-            status, resp_body = self.responses.pop(0)
+            entry = self.responses.pop(0)
+            if len(entry) == 3:
+                status, resp_body, extra_headers = entry
+            else:
+                status, resp_body = entry
+                extra_headers = {}
         else:
             status, resp_body = 200, b"OK"
+            extra_headers = {}
         self.send_response(status)
         self.send_header("Content-Type", "text/plain")
+        for k, v in extra_headers.items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(resp_body if isinstance(resp_body, bytes) else resp_body.encode())
 
@@ -42,6 +55,7 @@ class _WebhookHandler(BaseHTTPRequestHandler):
 def webhook_server():
     """Start a local HTTP server for testing."""
     server = HTTPServer(("127.0.0.1", 0), _WebhookHandler)
+    server.all_requests = []
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     port = server.server_address[1]
@@ -169,6 +183,33 @@ class TestWebhookSender:
         headers = server.last_request["headers"]
         assert "Stripe-Signature" in headers
 
+    def test_fresh_timestamp_on_retry(self, webhook_server):
+        """Verify X-Webhook-Timestamp and X-Webhook-ID differ between attempts."""
+        server, url = webhook_server
+        _WebhookHandler.responses = [(500, b"Error"), (200, b"OK")]
+        policy = RetryPolicy(max_retries=3, initial_delay=0.01, jitter=False)
+        sender = WebhookSender(retry_policy=policy)
+        sender.send(url, "test", {})
+
+        assert len(server.all_requests) == 2
+        id1 = server.all_requests[0]["headers"].get("X-Webhook-Id")
+        id2 = server.all_requests[1]["headers"].get("X-Webhook-Id")
+        # IDs must differ between attempts (fresh headers each retry)
+        assert id1 != id2
+
+    def test_retry_after_header_respected(self, webhook_server):
+        """429 with Retry-After should use that delay (capped by policy)."""
+        server, url = webhook_server
+        _WebhookHandler.responses = [
+            (429, b"Too Many Requests", {"Retry-After": "0"}),
+            (200, b"OK"),
+        ]
+        policy = RetryPolicy(max_retries=3, initial_delay=0.01, max_delay=5.0, jitter=False)
+        sender = WebhookSender(retry_policy=policy)
+        result = sender.send(url, "test", {})
+        assert result.success is True
+        assert result.total_attempts == 2
+
 
 class TestWebhookSenderAsync:
     @pytest.mark.asyncio
@@ -197,3 +238,32 @@ class TestWebhookSenderAsync:
         sender = WebhookSender()
         with pytest.raises(DeliveryError):
             await sender.send_async(url, "test", {})
+
+    @pytest.mark.asyncio
+    async def test_async_fresh_timestamp_on_retry(self, webhook_server):
+        """Verify timestamps differ between async retry attempts."""
+        server, url = webhook_server
+        _WebhookHandler.responses = [(500, b"Error"), (200, b"OK")]
+        policy = RetryPolicy(max_retries=3, initial_delay=0.01, jitter=False)
+        sender = WebhookSender(retry_policy=policy)
+        await sender.send_async(url, "test", {})
+
+        assert len(server.all_requests) == 2
+        # httpx lowercases header names, so use case-insensitive lookup
+        h1 = {k.lower(): v for k, v in server.all_requests[0]["headers"].items()}
+        h2 = {k.lower(): v for k, v in server.all_requests[1]["headers"].items()}
+        assert h1["x-webhook-id"] != h2["x-webhook-id"]
+
+    @pytest.mark.asyncio
+    async def test_async_retry_after_header_respected(self, webhook_server):
+        """429 with Retry-After should be respected in async too."""
+        server, url = webhook_server
+        _WebhookHandler.responses = [
+            (429, b"Too Many Requests", {"Retry-After": "0"}),
+            (200, b"OK"),
+        ]
+        policy = RetryPolicy(max_retries=3, initial_delay=0.01, max_delay=5.0, jitter=False)
+        sender = WebhookSender(retry_policy=policy)
+        result = await sender.send_async(url, "test", {})
+        assert result.success is True
+        assert result.total_attempts == 2
